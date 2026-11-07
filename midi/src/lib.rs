@@ -356,7 +356,12 @@ pub unsafe extern "system" fn midMessage(dev: u32, msg: u32, user: DWORD_PTR, p1
                 (*ring).stats[ST_CLOSES].fetch_add(1, Ordering::Relaxed);
             }
             SetEvent(inp.stop);
-            if let Some(t) = inp.thread.take() { let _ = t.join(); }
+            // the reader may be inside the program's own callback right now: wait for it a little,
+            // never forever (a join here from the program's main thread could deadlock it)
+            if let Some(t) = inp.thread.take() {
+                use std::os::windows::io::AsRawHandle;
+                if WaitForSingleObject(t.as_raw_handle() as HANDLE, 3000) == WAIT_OBJECT_0 { let _ = t.join(); } else { trace("reader thread did not stop in time; detached"); }
+            }
             CloseHandle(inp.stop);
             inp.client.notify(MIM_CLOSE, 0, 0);
             MMSYSERR_NOERROR

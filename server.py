@@ -181,16 +181,18 @@ class Bridge:
         return bool(hb.get("t")) and time.time() - hb["t"] < 3
 
     def current(self):
+        # called from several threads at once: the name is never None, and a lookup in progress
+        # on one thread must not leave another with nothing (a thread died on that once)
         now = time.time()
         if now - self.checked > 2:
-            self.checked = now
             alive = [n for n in BRIDGES if self.alive(n)]
             name = alive[0] if alive else (self.name or BRIDGES[0])
             if name != self.name:
                 self.name = name
                 midi._reset()   # reopen the MIDI port under its new name
                 log("using the %r controller script" % name)
-        return self.name
+            self.checked = now
+        return self.name or BRIDGES[0]
 
     def path(self, file):
         return os.path.join(HARDWARE, self.current(), file)
@@ -255,6 +257,13 @@ def needed():
 
 
 def keepalive():
+    try:
+        _keepalive()
+    except Exception:   # a dead keepalive leaves the panel stuck on 'Connecting': say why
+        log(traceback.format_exc())
+
+
+def _keepalive():
     # the script stops exporting a channel ~6 s after its last watch message, so
     # refresh every channel some panel window is still polling
     last_needed = time.time()

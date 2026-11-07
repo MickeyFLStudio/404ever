@@ -69,7 +69,7 @@ LOG = os.path.join(BASE, "log.txt")
 # parameters 2 and 3) and the TS404's own parameters (0x100 + n)
 OFFS = [2, 3] + [0x100 + i for i in (3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17,
                                    20, 21, 22, 23, 24, 29, 30, 31, 32, 33, 34, 35)]
-STATE = {"tick": 0, "errors": 0, "started": 0.0}
+STATE = {"tick": 0, "errors": 0, "started": 0.0, "midi": 0, "frames": 0}
 TS = {"watch": {}, "last": None, "sel": -1, "written": 0.0}   # watch: channel index or "sel" -> expiry time
 _frame = []
 
@@ -112,6 +112,7 @@ def _is_ts404(ch):
 def _heartbeat():
     chans = _chans()
     hb = {"t": time.time(), "tick": STATE["tick"], "version": VERSION, "errors": STATE["errors"],
+          "midi": STATE["midi"], "frames": STATE["frames"],
           "started": STATE["started"], "python": sys.version.split()[0], "ts404": chans}
     try:
         import transport
@@ -199,6 +200,7 @@ def _cc(cc, value):
     elif cc == 122 and _frame:
         data = bytes(_frame)
         _frame[:] = []
+        STATE["frames"] += 1
         try:
             _command(data)
         except Exception:
@@ -235,12 +237,16 @@ def OnIdle():
 
 def OnMidiMsg(event):
     # panel commands are handled here and never reach FL as controller moves
+    STATE["midi"] += 1
     try:
         if event.status == CC_STATUS and event.data1 in (120, 121, 122):
             event.handled = True
             _cc(event.data1, event.data2)
+        elif STATE["midi"] <= 20:
+            log("other midi: status %#x data %s %s" % (event.status, event.data1, event.data2))
     except Exception:
-        pass
+        STATE["errors"] += 1
+        log("midi: %s" % traceback.format_exc().splitlines()[-1])
 
 
 def OnProjectLoad(status):
