@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TS404 Panel</title>
+<style>
+  :root {
+    --bg: #343b42; --panel: #59616b; --panel-hi: #6c757f; --panel-lo: #444b53; --text: #e8edf2; --dim: #c3ccd5;
+    --led: #3cd24a; --led-off: #1f4a26; --knob: #d9573f; --knob-hi: #ef7a62; --btn: #2f4f7c; --btn-on: #4f86c9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font: 11px/1.2 "Segoe UI", Tahoma, sans-serif;
+         user-select: none; -webkit-user-select: none; }
+  /* everything is laid out at a fixed 560 x 372 and scaled to the window, so it fills FL's TS404 area exactly */
+  #stage { position: absolute; left: 0; top: 0; width: 560px; height: 372px; transform-origin: 0 0; }
+  .top { display: flex; gap: 6px; align-items: center; height: 26px; padding: 0 6px; background: #22272c; }
+  .top select { flex: 1; background: #15181b; color: var(--text); border: 1px solid #444; padding: 2px; font: inherit; }
+  body.embed .top { display: none; }
+  .status { width: 9px; height: 9px; border-radius: 50%; background: #a33; flex: none; }
+  .status.ok { background: var(--led); box-shadow: 0 0 6px var(--led); }
+  .grid { display: grid; gap: 4px; padding: 4px; grid-template-columns: 180px 212px 1fr; grid-template-rows: 109px 109px 109px; }
+  body.embed .grid { grid-template-rows: 110px 110px 110px; }
+  .head { white-space: nowrap; }
+  .sec { background: linear-gradient(var(--panel-hi), var(--panel) 30%, var(--panel-lo)); border: 1px solid #23282d;
+         border-radius: 3px; padding: 3px 5px; position: relative; }
+  .head { display: flex; align-items: center; gap: 5px; font-weight: 700; letter-spacing: .5px; font-size: 12px;
+          text-transform: uppercase; height: 20px; }
+  .row { display: flex; gap: 2px; align-items: flex-start; margin-top: 4px; }
+  .knob { display: flex; flex-direction: column; align-items: center; width: 42px; cursor: ns-resize; }
+  .knob svg { width: 36px; height: 36px; display: block; }
+  .knob span { font-size: 9px; color: var(--dim); margin-top: 2px; text-transform: uppercase; font-weight: 600; }
+  .opts { display: flex; gap: 2px; }
+  .opt { background: #283039; border: 1px solid #14191e; border-radius: 2px; height: 17px; min-width: 19px; padding: 0 4px;
+         display: flex; align-items: center; justify-content: center; cursor: pointer; color: #9fb3c8;
+         font: 700 9px "Segoe UI", sans-serif; }
+  .opt svg { width: 14px; height: 10px; }
+  .opt.txt { background: var(--btn); color: #cfe0f5; border-color: #172a42; }
+  .opt.on { color: #fff; background: #3a7a3f; box-shadow: inset 0 0 0 1px #8fe39a; }
+  .opt.txt.on { background: var(--btn-on); box-shadow: inset 0 0 0 1px #9cc4ff; }
+  .led { width: 11px; height: 11px; border: 1px solid #111; background: var(--led-off); display: block; cursor: pointer; margin: 0 auto; }
+  .led.on { background: var(--led); box-shadow: 0 0 4px var(--led); }
+  canvas.env { flex: 1; min-width: 0; width: 0; height: 50px; background: #1d3640; border: 1px solid #10232b; border-radius: 2px; margin: 2px 0 0 4px; }
+  .span2 { grid-column: span 2; }
+  .hint { position: absolute; left: 4px; right: 4px; bottom: 2px; height: 0; }
+  #hint { position: absolute; right: 8px; top: 4px; font-size: 10px; color: #dfe7ee; background: rgba(20,24,28,.75);
+          padding: 1px 6px; border-radius: 2px; pointer-events: none; opacity: 0; transition: opacity .2s; }
+  #hint.show { opacity: 1; }
+  .off { opacity: .4; pointer-events: none; }
+  .msg { position: absolute; left: 0; right: 0; top: 40%; text-align: center; color: #fff; font-size: 13px; display: none;
+         text-shadow: 0 1px 3px #000; }
+  .msg.show { display: block; }
+  .logo { position: absolute; right: 8px; bottom: 4px; font: italic 900 24px "Segoe UI", sans-serif; color: rgba(255,255,255,.12); }
+  .menu { position: fixed; z-index: 10; background: #e9ecef; color: #1b1f23; border: 1px solid #5d666f; min-width: 190px;
+          box-shadow: 2px 3px 8px rgba(0,0,0,.45); padding: 2px 0; font-size: 12px; display: none; }
+  .menu.show { display: block; }
+  .menu .it { padding: 3px 14px; cursor: default; }
+  .menu .it:hover { background: #3b6fb6; color: #fff; }
+  .menu .it.dis { color: #9aa1a8; pointer-events: none; }
+  .menu .cap { padding: 2px 8px; background: #59616b; color: #e8edf2; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="top">
+    <div class="status" id="status" title="Connection to FL"></div>
+    <select id="chan" title="TS404 channel"></select>
+  </div>
+  <div class="grid" id="panel">
+    <div class="sec"><div class="head">Osc 1 <div class="opts" data-sel="267"></div></div>
+      <div class="row"><div data-knob="259" data-l="Crs"></div><div data-knob="261" data-l="Fine"></div><div data-knob="263" data-l="PW"></div></div></div>
+    <div class="sec"><div class="head">Osc 2 <div class="opts" data-sel="268"></div></div>
+      <div class="row"><div data-knob="260" data-l="Crs"></div><div data-knob="262" data-l="Fine"></div><div data-knob="264" data-l="PW"></div><div data-knob="285" data-l="FM"></div></div></div>
+    <div class="sec"><div class="head">Osc 1+2</div>
+      <div class="row"><div data-knob="270" data-l="Mix"></div><div data-knob="286" data-l="RM"></div>
+        <div class="knob" style="cursor:default;padding-top:12px"><span class="led" data-toggle="265"></span><span>Sync</span></div></div></div>
+
+    <div class="sec span2"><div class="head">Envelope</div>
+      <div class="row"><div data-knob="287" data-l="Att"></div><div data-knob="288" data-l="Dec"></div><div data-knob="290" data-l="Sus"></div><div data-knob="291" data-l="SL"></div><div data-knob="289" data-l="Rel"></div><canvas class="env" id="env"></canvas></div></div>
+    <div class="sec"><div class="head">Filter</div>
+      <div class="opts" data-sel="269" style="margin-top:1px"></div>
+      <div class="row" style="margin-top:3px"><div data-knob="2" data-l="Cut"></div><div data-knob="3" data-l="Res"></div><div data-knob="276" data-l="Env"></div></div></div>
+
+    <div class="sec span2"><div class="head">LFO <div class="opts" data-sel="280"></div><div style="flex:1"></div><div class="opts" data-sel="279"></div></div>
+      <div class="row"><div data-knob="277" data-l="Amt"></div><div data-knob="278" data-l="Spd"></div></div>
+      <div class="logo">TS404</div></div>
+    <div class="sec"><div class="head">Dist <div class="opts" data-sel="271"></div></div>
+      <div class="row"><div data-knob="272" data-l="Amt"></div><div data-knob="273" data-l="Thr"></div></div></div>
+  </div>
+  <div id="hint"></div>
+  <div class="msg" id="msg"></div>
+</div>
+<div class="menu" id="menu"></div>
+<script>
+// Button choices, in FL's raw value order (read from FL 2026's TS404); icons copied from the FL 11 window.
+const ICON = {
+  saw: '<svg viewBox="0 0 14 10"><path d="M1 9 L12 1 V9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  sqr: '<svg viewBox="0 0 14 10"><path d="M1 9 V1 H7 V9 H13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  sin: '<svg viewBox="0 0 14 10"><path d="M1 5 C3 -1 5 -1 7 5 S11 11 13 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  pls: '<svg viewBox="0 0 14 10"><path d="M1 9 V1 H4 V9 H13" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  tri: '<svg viewBox="0 0 14 10"><path d="M1 9 L7 1 L13 9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
+const OPTIONS = {
+  267: [ICON.saw, ICON.sqr, ICON.sin, ICON.pls, '?'],
+  268: [ICON.saw, ICON.sqr, ICON.sin, ICON.pls, '?'],
+  280: [ICON.sin, ICON.sqr, ICON.tri],
+  269: ['LP12', 'LP24', 'HP', 'BP', 'OFF'],
+  279: ['OSC', 'RES', 'CUT', 'PW'],
+  271: ['A', 'B'],
+};
+const NAMES = { 2: 'Filter cutoff', 3: 'Filter resonance', 259: 'Osc 1 coarse', 260: 'Osc 2 coarse', 261: 'Osc 1 fine', 262: 'Osc 2 fine',
+  263: 'Osc 1 pulse width', 264: 'Osc 2 pulse width', 265: 'Osc sync', 267: 'Osc 1 shape', 268: 'Osc 2 shape', 269: 'Filter type',
+  270: 'Osc mix', 271: 'Distortion type', 272: 'Distortion amount', 273: 'Distortion threshold', 276: 'Filter envelope',
+  277: 'LFO amount', 278: 'LFO speed', 279: 'LFO target', 280: 'LFO shape', 285: 'FM', 286: 'Ring mod',
+  287: 'Attack', 288: 'Decay', 289: 'Release', 290: 'Sustain (hold time)', 291: 'Sustain level' };
+// FL's own defaults for a new TS404 (Data\System\TS404Track.fst): middle-click resets a control to these
+const DEFAULTS = { 2: 256, 3: 0, 259: -12, 260: 0, 261: 0, 262: 0, 263: 0, 264: 0, 265: 0, 267: 0, 268: 0, 269: 1, 270: 0,
+  271: 0, 272: 120, 273: 9, 276: 0, 277: 40, 278: 32, 279: 2, 280: 0, 285: 0, 286: 0, 287: 24, 288: 100, 289: 39, 290: 100, 291: 0 };
+// raw ranges (FL 2026): used only to print values
+const RANGE = { 2: [0, 256], 3: [0, 256], 259: [-12, 12], 260: [-12, 12], 261: [-128, 128], 262: [-128, 128], 263: [0, 256], 264: [0, 256],
+  270: [0, 256], 272: [0, 128], 273: [0, 10], 276: [0, 256], 277: [0, 256], 278: [0, 100], 285: [0, 256], 286: [0, 256],
+  287: [0, 100], 288: [0, 100], 289: [0, 100], 290: [0, 100], 291: [0, 100] };
+
+const $ = s => document.querySelector(s);
+const qs = new URLSearchParams(location.search);
+const EMBED = qs.has('companion');        // opened by the server beside a TS404 plugin window
+const PIN = qs.has('ch') ? +qs.get('ch') : null;
+if (EMBED) document.body.classList.add('embed');
+let state = { params: {} }, chan = PIN ?? -1, dragging = null, holdUntil = {};
+const post = (url, body) => fetch(url, { method: 'POST', body: JSON.stringify(body || {}) });
+
+function fit() {
+  const h = EMBED ? 372 - 26 : 372, s = Math.min(innerWidth / 560, innerHeight / h);
+  $('#stage').style.height = h + 'px';
+  $('#stage').style.transform = `scale(${s})`;
+}
+addEventListener('resize', fit);
+
+function knobSVG(v) {
+  const a = -135 + 270 * v, r = Math.PI / 180;
+  const x = 18 + 11 * Math.sin(a * r), y = 18 - 11 * Math.cos(a * r);
+  const p = t => [18 + 16 * Math.sin(t * r), 18 - 16 * Math.cos(t * r)];
+  const arc = (from, to) => { const [x1, y1] = p(from), [x2, y2] = p(to); return `M${x1} ${y1} A16 16 0 ${to - from > 180 ? 1 : 0} 1 ${x2} ${y2}`; };
+  return `<svg viewBox="0 0 36 36"><path d="${arc(-135, 135)}" stroke="#2a2f34" stroke-width="2.5" fill="none"/>
+    <path d="${arc(-135, Math.max(-134.9, a))}" stroke="#f0b54a" stroke-width="2.5" fill="none"/>
+    <circle cx="18" cy="18" r="12.5" fill="url(#kg)" stroke="#5a1f15"/>
+    <line x1="18" y1="18" x2="${x}" y2="${y}" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+}
+
+const param = off => state.params[off];
+const norm = off => { const p = param(off); return p ? p[1] : 0; };
+function valueText(off) {
+  const p = param(off); if (!p) return '';
+  const R = RANGE[off];
+  if (!R) return '';
+  const raw = Math.round(R[0] + p[1] * (R[1] - R[0]));
+  return R[0] < 0 ? (raw > 0 ? '+' : '') + raw : Math.round(p[1] * 100) + '%';
+}
+let hintTimer;
+function hint(off) {
+  const t = valueText(off);
+  $('#hint').textContent = NAMES[off] + (t ? ': ' + t : '');
+  $('#hint').classList.add('show');
+  clearTimeout(hintTimer); hintTimer = setTimeout(() => $('#hint').classList.remove('show'), 1500);
+}
+
+let sendTimer = {}, pending = {};
+function send(off, v, raw) {
+  // coalesce: at most one request per control every 25 ms, always ending on the latest value
+  pending[off] = { v, raw };
+  holdUntil[off] = Date.now() + 600;
+  if (sendTimer[off]) return;
+  const flush = () => {
+    const p = pending[off]; delete pending[off];
+    if (!p) { sendTimer[off] = null; return; }
+    post('/set', { ch: chan, off, v: p.v, raw: p.raw });
+    sendTimer[off] = setTimeout(flush, 25);
+  };
+  flush();
+}
+function reset(off) {   // middle click, like FL: back to the default value
+  if (!(off in DEFAULTS)) return;
+  const raw = DEFAULTS[off], R = RANGE[off], p = state.params[off] || [0, 0, ''];
+  p[0] = raw;
+  if (R) p[1] = (raw - R[0]) / (R[1] - R[0]);
+  state.params[off] = p;
+  holdUntil[off] = Date.now() + 600;
+  paint(); hint(off);
+  send(off, raw, true);
+}
+function local(off, v) { const p = state.params[off] || [0, 0, '']; p[1] = v; state.params[off] = p; paint(); hint(off); }
+function localRaw(off, v) { const p = state.params[off] || [0, 0, '']; p[0] = v; state.params[off] = p; paint(); hint(off); }
+
+function build() {
+  document.body.insertAdjacentHTML('beforeend', '<svg width="0" height="0" style="position:absolute"><defs><radialGradient id="kg" cx="40%" cy="35%"><stop offset="0" style="stop-color:var(--knob-hi)"/><stop offset="1" style="stop-color:var(--knob)"/></radialGradient></defs></svg>');
+  document.querySelectorAll('[data-knob]').forEach(el => {
+    const off = +el.dataset.knob;
+    el.className = 'knob';
+    el.innerHTML = knobSVG(0) + `<span>${el.dataset.l}</span>`;
+    el.addEventListener('pointerdown', e => {
+      if (e.button === 1) { e.preventDefault(); reset(off); return; }
+      if (e.button !== 0) return;
+      el.setPointerCapture(e.pointerId);
+      dragging = { off, y: e.clientY, v: norm(off), el };
+    });
+    el.addEventListener('pointermove', e => {
+      if (!dragging || dragging.el !== el) return;
+      const fine = e.shiftKey || e.ctrlKey ? 0.2 : 1;
+      const v = Math.min(1, Math.max(0, dragging.v + (dragging.y - e.clientY) / 160 * fine));
+      dragging.y = e.clientY; dragging.v = v;
+      local(off, v); send(off, v, false);
+    });
+    el.addEventListener('pointerup', () => { dragging = null; });
+    el.addEventListener('wheel', e => {
+      e.preventDefault();
+      const v = Math.min(1, Math.max(0, norm(off) - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.02)));
+      local(off, v); send(off, v, false);
+    }, { passive: false });
+    el.addEventListener('mouseenter', () => hint(off));
+  });
+  document.querySelectorAll('[data-sel]').forEach(el => {
+    const off = +el.dataset.sel;
+    el.innerHTML = OPTIONS[off].map((t, i) => `<div class="opt${t.startsWith('<') ? '' : ' txt'}" data-v="${i}">${t}</div>`).join('');
+    el.addEventListener('click', e => {
+      const b = e.target.closest('.opt'); if (!b) return;
+      const v = +b.dataset.v; localRaw(off, v); send(off, v, true);
+    });
+    el.addEventListener('pointerdown', e => { if (e.button === 1) { e.preventDefault(); reset(off); } });
+    el.addEventListener('mouseenter', () => hint(off));
+  });
+  document.querySelectorAll('[data-toggle]').forEach(el => {
+    const off = +el.dataset.toggle;
+    el.addEventListener('click', () => { const v = param(off) && param(off)[0] ? 0 : 1; localRaw(off, v); send(off, v, true); });
+    el.addEventListener('pointerdown', e => { if (e.button === 1) { e.preventDefault(); reset(off); } });
+    el.addEventListener('mouseenter', () => hint(off));
+  });
+  // no autoscroll / paste on middle click anywhere in the panel
+  document.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); });
+  document.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+}
+
+function paint() {
+  document.querySelectorAll('[data-knob]').forEach(el => { el.firstElementChild.outerHTML = knobSVG(norm(+el.dataset.knob)); });
+  document.querySelectorAll('[data-sel]').forEach(el => {
+    const p = param(+el.dataset.sel);
+    el.querySelectorAll('.opt').forEach(b => b.classList.toggle('on', !!p && +b.dataset.v === p[0]));
+  });
+  document.querySelectorAll('[data-toggle]').forEach(el => { const p = param(+el.dataset.toggle); el.classList.toggle('on', !!p && !!p[0]); });
+  drawEnv();
+}
+
+function drawEnv() {
+  // only redraw when a value or the size changed (paint runs 10x a second); the canvas must
+  // never size itself from its own pixel width or the flex row grows it without end
+  const c = $('#env'), A = norm(287), D = norm(288), S = norm(290), L = norm(291), R = norm(289);
+  const w = Math.round(c.clientWidth * 2), h = Math.round(c.clientHeight * 2);
+  const key = [w, h, A, D, S, L, R].join();
+  if (!w || !h || c.dataset.key === key) return;
+  c.dataset.key = key;
+  if (c.width !== w) c.width = w;
+  if (c.height !== h) c.height = h;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  const seg = (w - 12) / 4, pad = 6, top = pad, bot = h - pad;
+  const xs = [pad, pad + A * seg, pad + (A + D) * seg, pad + (A + D + S) * seg, pad + (A + D + S + R) * seg];
+  const ys = [bot, top, bot - L * (bot - top), bot - L * (bot - top), bot];
+  g.strokeStyle = '#eaf6ff'; g.lineWidth = 3; g.beginPath();
+  xs.forEach((x, i) => i ? g.lineTo(x, ys[i]) : g.moveTo(x, ys[i])); g.stroke();
+  g.fillStyle = '#f0b54a'; xs.forEach((x, i) => g.fillRect(x - 4, ys[i] - 4, 8, 8));
+}
+
+async function poll() {
+  try {
+    const key = PIN !== null ? PIN : ($('#chan').value || 'sel');
+    const s = await (await fetch('/state?ch=' + key)).json();
+    const ok = s.bridge && s.fresh;
+    $('#status').classList.toggle('ok', !!ok);
+    if (!EMBED) {
+      const sel = $('#chan'), want = sel.value;
+      const opts = ['<option value="sel">Follow selected TS404 channel</option>']
+        .concat((s.chans || []).map(([i, n]) => `<option value="${i}">${i + 1}: ${n}</option>`)).join('');
+      if (sel.dataset.opts !== opts) { sel.innerHTML = opts; sel.dataset.opts = opts; sel.value = want || 'sel'; }
+    }
+    let msg = '';
+    if (!s.bridge) msg = 'FL Studio is closed, or the TS404 Panel script is not running in FL (Options > MIDI settings).';
+    else if (!s.midi) msg = 'Cannot open the "TS404 Panel" MIDI port.';
+    else if (!ok) msg = 'Connecting to FL...';
+    else if (s.chan < 0) msg = 'Select a TS404 channel in the channel rack.';
+    $('#msg').textContent = msg; $('#msg').classList.toggle('show', !!msg);
+    $('#panel').classList.toggle('off', !!msg);
+    if (ok && s.chan >= 0) {
+      chan = s.chan;
+      // the server finds companion windows by exactly "TS404 - <name>"
+      document.title = EMBED ? `TS404 - ${s.name}` : `TS404 Panel - ${s.name}`;
+      const now = Date.now();
+      for (const [off, p] of Object.entries(s.params || {}))
+        if (!(holdUntil[off] > now) && !(dragging && dragging.off == off)) state.params[off] = p;
+      paint();
+    }
+  } catch (e) { $('#status').classList.remove('ok'); }
+  setTimeout(poll, 100);
+}
+
+// ---- right-click menu (FL's own knob menu can't be opened from outside FL)
+let clip = null;
+function showMenu(e, off) {
+  e.preventDefault();
+  const m = $('#menu'), raw = !document.querySelector(`[data-knob="${off}"]`);
+  const items = [
+    ['cap', NAMES[off]],
+    ['Edit events', () => post('/editor', { ch: chan, off, mode: 0 })],
+    ['Edit events in piano roll', () => post('/editor', { ch: chan, off, mode: 1 })],
+    ['Create automation clip', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'clip' }))],
+    ['Link to controller...', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'link' }))],
+    ['Reset to default', off in DEFAULTS ? () => reset(off) : null],
+    ['Copy value', () => { const p = param(off); clip = p && { raw, v: raw ? p[0] : p[1] }; }],
+    ['Paste value', clip && clip.raw === raw ? () => { if (raw) localRaw(off, clip.v); else local(off, clip.v); send(off, clip.v, raw); } : null],
+  ];
+  m.innerHTML = items.map(([t, f], i) => t === 'cap' ? `<div class="cap">${f}</div>` : `<div class="it${f ? '' : ' dis'}" data-i="${i}">${t}</div>`).join('');
+  m.onclick = ev => { const it = ev.target.closest('.it'); if (it) { items[+it.dataset.i][1](); hideMenu(); } };
+  m.classList.add('show');
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(0, Math.min(e.clientX, innerWidth - r.width - 2)) + 'px';
+  m.style.top = Math.max(0, Math.min(e.clientY, innerHeight - r.height - 2)) + 'px';
+}
+function hideMenu() { $('#menu').classList.remove('show'); }
+document.addEventListener('pointerdown', e => { if (!e.target.closest('#menu')) hideMenu(); });
+document.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const el = e.target.closest('[data-knob],[data-sel],[data-toggle]');
+  if (el) showMenu(e, +(el.dataset.knob || el.dataset.sel || el.dataset.toggle));
+});
+
+// ---- Space plays / stops FL even though this window has the focus
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'SELECT') { e.preventDefault(); post('/transport'); }
+  if (e.key === 'Escape') hideMenu();
+});
+
+build(); fit();
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "ts404_midi"
+version = "0.1.0"
+edition = "2021"
+description = "A user-mode MME MIDI driver: one loopback port named 'TS404 Panel' (no kernel driver, no loopMIDI)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 2
+debug = false
+panic = "abort"

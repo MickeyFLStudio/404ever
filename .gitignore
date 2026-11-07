@@ -1,0 +1,11 @@
+__pycache__/
+build/
+dist/
+installer/Output/
+host/target/
+midi/target/
+*.spec
+*.log
+*.bak
+*.old
+*.lnk
