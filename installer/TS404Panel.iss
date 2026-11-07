@@ -217,9 +217,13 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then begin
     RegisterDriver;
-    // tells the FL script how to start the service when a project with a TS404 is open
-    SaveStringToFile(ExpandConstant('{userdocs}\Image-Line\FL Studio\Settings\Hardware\TS404 Panel\launch.txt'),
-                     ExpandConstant('{app}\TS404Panel.exe') + #13#10 + #13#10, False);
+    // tells the MIDI driver (inside FL) how to start the service when a project with a TS404 is open:
+    // program, arguments, FL script heartbeat, service alive file
+    ForceDirectories(ExpandConstant('{localappdata}\TS404 Panel'));
+    SaveStringToFile(ExpandConstant('{localappdata}\TS404 Panel\launch.txt'),
+                     ExpandConstant('{app}\TS404Panel.exe') + #10 + #10 +
+                     ExpandConstant('{userdocs}\Image-Line\FL Studio\Settings\Hardware\TS404 Panel\heartbeat.json') + #10 +
+                     ExpandConstant('{userdocs}\Image-Line\FL Studio\Settings\Hardware\TS404 Panel\server.json') + #10, False);
   end;
 end;
 

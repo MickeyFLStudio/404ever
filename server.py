@@ -63,11 +63,12 @@ HARDWARE = os.path.join(documents_dir(), "Image-Line", "FL Studio", "Settings", 
 # dev setup (loopMIDI) whose script has the same section. Whichever FL is running (fresh
 # heartbeat) is used.
 BRIDGES = ["TS404 Panel", "FL Bridge"]
-# On-demand service: the "TS404 Panel" script in FL starts us (launch.txt tells it how) as soon as a
-# project with a TS404 is open, and we quit again after a while with nothing to do (no FL, no TS404
-# channel, no panel window), so nothing runs at login or in projects without a TS404.
+# On-demand service: FL's script sandbox cannot start programs, but our MIDI driver runs inside FL
+# (loaded when FL opens the "TS404 Panel" port) and can. It reads launch.txt and starts us as soon
+# as FL's heartbeat lists a TS404 channel while server.json is stale; we quit again after a while
+# with nothing to do (no FL, no TS404 channel, no panel window). Nothing runs at login.
 SCRIPT_DIR = os.path.join(HARDWARE, "TS404 Panel")
-LAUNCH = os.path.join(SCRIPT_DIR, "launch.txt")      # line 1: program, line 2: arguments
+LAUNCH = os.path.join(DATA_DIR, "launch.txt")        # program / arguments / heartbeat.json / server.json
 ALIVE = os.path.join(SCRIPT_DIR, "server.json")      # {"t", "pid"}, refreshed every second
 IDLE_EXIT = 120.0                                     # seconds of nothing to do before quitting
 FL_DB = os.path.join(documents_dir(), "Image-Line", "FL Studio", "Presets", "Plugin database")
@@ -231,15 +232,16 @@ def watch(ch):
 
 
 def write_launch():
-    """How the FL script can start this service: the packaged exe, or python + server.py in development."""
+    """How the driver inside FL can start this service: the packaged exe, or python + server.py in
+    development; plus the files it watches to decide (heartbeat.json: TS404 channels; server.json: us)."""
     try:
         os.makedirs(SCRIPT_DIR, exist_ok=True)
         if FROZEN:
             prog, args = sys.executable, ""
         else:
             prog, args = sys.executable.replace("python.exe", "pythonw.exe"), '"%s"' % os.path.abspath(__file__)
-        with open(LAUNCH, "w") as f:
-            f.write(prog + "\n" + args + "\n")
+        with open(LAUNCH, "w", encoding="utf-8") as f:
+            f.write("\n".join([prog, args, os.path.join(SCRIPT_DIR, "heartbeat.json"), ALIVE]) + "\n")
     except OSError as e:
         log("cannot write %s: %s" % (LAUNCH, e))
 

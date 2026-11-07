@@ -114,9 +114,9 @@ const NAMES = { 2: 'Filter cutoff', 3: 'Filter resonance', 259: 'Osc 1 coarse', 
   270: 'Osc mix', 271: 'Distortion type', 272: 'Distortion amount', 273: 'Distortion threshold', 276: 'Filter envelope',
   277: 'LFO amount', 278: 'LFO speed', 279: 'LFO target', 280: 'LFO shape', 285: 'FM', 286: 'Ring mod',
   287: 'Attack', 288: 'Decay', 289: 'Release', 290: 'Sustain (hold time)', 291: 'Sustain level' };
-// FL's own defaults for a new TS404 (Data\System\TS404Track.fst): middle-click resets a control to these
-const DEFAULTS = { 2: 256, 3: 0, 259: -12, 260: 0, 261: 0, 262: 0, 263: 0, 264: 0, 265: 0, 267: 0, 268: 0, 269: 1, 270: 0,
-  271: 0, 272: 120, 273: 9, 276: 0, 277: 40, 278: 32, 279: 2, 280: 0, 285: 0, 286: 0, 287: 24, 288: 100, 289: 39, 290: 100, 291: 0 };
+// FL's own values for a freshly added TS404 (read back from FL 2026): middle-click resets a control to these
+const DEFAULTS = { 2: 120, 3: 80, 259: 2, 260: 0, 261: -8, 262: 0, 263: 0, 264: 0, 265: 0, 267: 0, 268: 3, 269: 1, 270: 256,
+  271: 0, 272: 0, 273: 10, 276: 156, 277: 0, 278: 0, 279: 2, 280: 0, 285: 256, 286: 0, 287: 15, 288: 25, 289: 32, 290: 73, 291: 50 };
 // raw ranges (FL 2026): used only to print values
 const RANGE = { 2: [0, 256], 3: [0, 256], 259: [-12, 12], 260: [-12, 12], 261: [-128, 128], 262: [-128, 128], 263: [0, 256], 264: [0, 256],
   270: [0, 256], 272: [0, 128], 273: [0, 10], 276: [0, 256], 277: [0, 256], 278: [0, 100], 285: [0, 256], 286: [0, 256],

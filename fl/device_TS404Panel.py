@@ -16,12 +16,11 @@ sub-interpreter without threads or sockets, so only plain open()/write() is used
   heartbeat.json   written ~every 0.5 s while loaded: {"t", "version", "ts404": [[index, name], ...]}
   ts404.json       the watched channels' parameter values, while a panel watches them
   log.txt          append-only log
-  launch.txt       written by the panel service / installer: how to start the service (program, arguments)
   server.json      written by the service every second while it runs: {"t", "pid"}
 
-The service only needs to run while a project with a TS404 is open, so this script starts
-it (launch.txt) when it sees a TS404 channel and no live server.json; the service quits by
-itself when there is nothing to do.
+The service only needs to run while a project with a TS404 is open. This sandbox cannot start
+programs, so the "TS404 Panel" MIDI driver (loaded inside FL with the port) starts it when the
+heartbeat lists a TS404 channel and server.json is stale; the service quits by itself when idle.
 
 Commands arrive as plain CCs on MIDI channel 16, NOT SysEx (incoming SysEx deadlocks
 FL 2026's main thread): CC 120 = start (value = command), CC 121 = next payload
@@ -70,9 +69,7 @@ LOG = os.path.join(BASE, "log.txt")
 # parameters 2 and 3) and the TS404's own parameters (0x100 + n)
 OFFS = [2, 3] + [0x100 + i for i in (3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17,
                                    20, 21, 22, 23, 24, 29, 30, 31, 32, 33, 34, 35)]
-STATE = {"tick": 0, "errors": 0, "started": 0.0, "launched": 0.0}
-LAUNCH = os.path.join(BASE, "launch.txt")
-SERVER = os.path.join(BASE, "server.json")
+STATE = {"tick": 0, "errors": 0, "started": 0.0}
 TS = {"watch": {}, "last": None, "sel": -1, "written": 0.0}   # watch: channel index or "sel" -> expiry time
 _frame = []
 
@@ -112,34 +109,6 @@ def _is_ts404(ch):
     return isinstance(ch, int) and 0 <= ch < channels.channelCount() and channels.getChannelType(ch) == midi.CT_Hybrid
 
 
-def _server_alive():
-    try:
-        with open(SERVER) as f:
-            return time.time() - float((json.load(f) if json else eval(f.read()))["t"]) < 5
-    except Exception:
-        return False
-
-
-def _start_server(chans):
-    """Start the panel service when a TS404 channel exists and no service is running (at most once per 30 s)."""
-    now = time.time()
-    if not chans or now - STATE["launched"] < 30 or _server_alive():
-        return
-    STATE["launched"] = now
-    try:
-        with open(LAUNCH) as f:
-            lines = f.read().splitlines() + ["", ""]
-        prog, args = lines[0].strip(), lines[1].strip()
-        if prog and os.path.exists(prog):
-            if args:
-                os.startfile(prog, arguments=args)
-            else:
-                os.startfile(prog)
-            log("started the panel service: %s %s" % (prog, args))
-    except Exception as e:
-        log("cannot start the panel service: %s" % e)
-
-
 def _heartbeat():
     chans = _chans()
     hb = {"t": time.time(), "tick": STATE["tick"], "version": VERSION, "errors": STATE["errors"],
@@ -151,10 +120,6 @@ def _heartbeat():
     except Exception:
         pass
     _write_json(HB, hb)
-    try:
-        _start_server(chans)
-    except Exception:
-        pass
 
 
 def _export():

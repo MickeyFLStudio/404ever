@@ -55,6 +55,7 @@ const INVALID_HANDLE_VALUE: HANDLE = -1isize as HANDLE;
 const PAGE_READWRITE: DWORD = 0x04;
 const FILE_MAP_ALL_ACCESS: DWORD = 0xF001F;
 const WAIT_OBJECT_0: DWORD = 0;
+const WAIT_TIMEOUT: DWORD = 0x102;
 const WAIT_ABANDONED: DWORD = 0x80;
 const INFINITE: DWORD = 0xFFFF_FFFF;
 
@@ -66,7 +67,6 @@ const MMSYSERR_ALLOCATED: DWORD = 4;
 const MMSYSERR_INVALHANDLE: DWORD = 5;
 const MMSYSERR_NOTSUPPORTED: DWORD = 8;
 const MMSYSERR_INVALPARAM: DWORD = 11;
-const MIDIERR_STILLPLAYING: DWORD = 65;
 
 const DRV_LOAD: u32 = 1;
 const DRV_ENABLE: u32 = 2;
@@ -158,7 +158,11 @@ const MAGIC: u32 = 0x3430_3454; // "T404"
 const CAP: u32 = 4096;          // messages; a panel sends ~10 per knob move
 
 #[repr(C)]
-struct Ring { magic: AtomicU32, cap: AtomicU32, head: AtomicU32, tail: AtomicU32, msgs: [AtomicU32; CAP as usize] }
+struct Ring { magic: AtomicU32, cap: AtomicU32, head: AtomicU32, tail: AtomicU32,
+              stats: [AtomicU32; 8],   // in_open, started, pushed, delivered, dropped, opens, closes, spawns (diagnostics)
+              msgs: [AtomicU32; CAP as usize] }
+const ST_OPEN: usize = 0; const ST_STARTED: usize = 1; const ST_PUSHED: usize = 2; const ST_DELIVERED: usize = 3;
+const ST_DROPPED: usize = 4; const ST_OPENS: usize = 5; const ST_CLOSES: usize = 6; const ST_SPAWNS: usize = 7;
 
 struct Shared { ring: *mut Ring, event: HANDLE, lock: HANDLE }
 unsafe impl Send for Shared {}
@@ -170,12 +174,12 @@ unsafe fn shared() -> Option<(*mut Ring, HANDLE, HANDLE)> {
     let mut g = SHARED.lock().ok()?;
     if let Some(s) = g.as_ref() { return Some((s.ring, s.event, s.lock)); }
     let size = std::mem::size_of::<Ring>();
-    let map = CreateFileMappingW(INVALID_HANDLE_VALUE, ptr::null(), PAGE_READWRITE, 0, size as u32, wide("Local\\TS404Panel.Midi.v1").as_ptr());
+    let map = CreateFileMappingW(INVALID_HANDLE_VALUE, ptr::null(), PAGE_READWRITE, 0, size as u32, wide("Local\\TS404Panel.Midi.v2").as_ptr());
     if map.is_null() { return None; }
     let view = MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, size) as *mut Ring;
     if view.is_null() { CloseHandle(map); return None; }
-    let event = CreateEventW(ptr::null(), 0, 0, wide("Local\\TS404Panel.Midi.v1.Data").as_ptr());
-    let lock = CreateMutexW(ptr::null(), 0, wide("Local\\TS404Panel.Midi.v1.Lock").as_ptr());
+    let event = CreateEventW(ptr::null(), 0, 0, wide("Local\\TS404Panel.Midi.v2.Data").as_ptr());
+    let lock = CreateMutexW(ptr::null(), 0, wide("Local\\TS404Panel.Midi.v2.Lock").as_ptr());
     if event.is_null() || lock.is_null() { return None; }
     WaitForSingleObject(lock, 2000);
     if (*view).magic.load(Ordering::Acquire) != MAGIC {   // fresh mapping (zeroed by Windows)
@@ -199,6 +203,9 @@ unsafe fn push(msg: u32) -> bool {
     if ok {
         (*ring).msgs[(head % CAP) as usize].store(msg, Ordering::Relaxed);
         (*ring).head.store(head.wrapping_add(1), Ordering::Release);
+        (*ring).stats[ST_PUSHED].fetch_add(1, Ordering::Relaxed);
+    } else {
+        (*ring).stats[ST_DROPPED].fetch_add(1, Ordering::Relaxed);
     }
     ReleaseMutex(lock);
     SetEvent(event);
@@ -226,11 +233,52 @@ unsafe impl Send for Input {}
 
 static INPUT: Mutex<Option<Input>> = Mutex::new(None);
 
+// ----------------------------------------------------------------------------- starting the panel service
+// FL's controller-script sandbox cannot start programs, but this driver lives inside FL while the port
+// is open. launch.txt (%LOCALAPPDATA%\TS404 Panel) says: program, arguments, FL's heartbeat.json, the
+// service's server.json. When the heartbeat is fresh and lists a TS404 channel and server.json is stale,
+// the service is started (at most once per 30 s).
+static LAST_SPAWN: AtomicU32 = AtomicU32::new(0);
+
+fn fresh(path: &str, secs: u64) -> bool {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+        .map(|d| d.as_secs() < secs).unwrap_or(false)
+}
+
+unsafe fn maybe_launch(ring: *mut Ring) {
+    use std::os::windows::process::CommandExt;
+    let now = GetTickCount();
+    let last = LAST_SPAWN.load(Ordering::Relaxed);
+    if last != 0 && now.wrapping_sub(last) < 30_000 { return; }
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else { return };
+    let path = std::path::Path::new(&base).join("TS404 Panel").join("launch.txt");
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    if lines.len() < 4 || lines[0].is_empty() { return; }
+    let (prog, args, heartbeat, alive) = (lines[0], lines[1], lines[2], lines[3]);
+    if fresh(alive, 5) || !fresh(heartbeat, 5) { return; }   // service already running / FL script not running
+    let Ok(hb) = std::fs::read_to_string(heartbeat) else { return };
+    if !hb.contains("\"ts404\": [[") { return; }              // no TS404 channel in this project
+    LAST_SPAWN.store(now.max(1), Ordering::Relaxed);
+    let mut cmd = std::process::Command::new(prog);
+    if !args.is_empty() { cmd.raw_arg(args); }
+    cmd.creation_flags(0x0800_0008);   // CREATE_NO_WINDOW | DETACHED_PROCESS
+    match cmd.spawn() {
+        Ok(_) => { (*ring).stats[ST_SPAWNS].fetch_add(1, Ordering::Relaxed); trace(&format!("started {prog} {args}")); }
+        Err(e) => trace(&format!("cannot start {prog}: {e}")),
+    }
+}
+
 unsafe fn reader(stop: HANDLE) {
     let Some((ring, event, _)) = shared() else { return };
     let hs = [stop, event];
     loop {
-        if WaitForMultipleObjects(2, hs.as_ptr(), 0, INFINITE) != WAIT_OBJECT_0 + 1 { return; }
+        match WaitForMultipleObjects(2, hs.as_ptr(), 0, 2000) {
+            WAIT_TIMEOUT => { maybe_launch(ring); continue; }
+            r if r == WAIT_OBJECT_0 + 1 => {}
+            _ => return,
+        }
         loop {
             let tail = (*ring).tail.load(Ordering::Relaxed);
             if tail == (*ring).head.load(Ordering::Acquire) { break; }
@@ -242,6 +290,7 @@ unsafe fn reader(stop: HANDLE) {
             };
             if let Some((client, start)) = target {
                 client.notify(MIM_DATA, msg as DWORD_PTR, GetTickCount().wrapping_sub(start) as DWORD_PTR);
+                (*ring).stats[ST_DELIVERED].fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -285,6 +334,8 @@ pub unsafe extern "system" fn midMessage(dev: u32, msg: u32, user: DWORD_PTR, p1
             let thread = std::thread::Builder::new().name("TS404 Panel MIDI".into()).spawn(move || reader(stop_u as HANDLE)).ok();
             if thread.is_none() { CloseHandle(stop); return MMSYSERR_ERROR; }
             *g = Some(Input { client, started: false, start_tick: GetTickCount(), buffers: Vec::new(), stop, thread });
+            (*ring).stats[ST_OPEN].store(1, Ordering::Relaxed);
+            (*ring).stats[ST_OPENS].fetch_add(1, Ordering::Relaxed);
             if user != 0 { *(user as *mut DWORD_PTR) = 1; }
             let c = client;
             drop(g);
@@ -294,8 +345,16 @@ pub unsafe extern "system" fn midMessage(dev: u32, msg: u32, user: DWORD_PTR, p1
         MIDM_CLOSE => {
             let Ok(mut g) = INPUT.lock() else { return MMSYSERR_ERROR };
             let Some(mut inp) = g.take() else { return MMSYSERR_INVALHANDLE };
-            if !inp.buffers.is_empty() { *g = Some(inp); return MIDIERR_STILLPLAYING; }
             drop(g);
+            // a program may close without resetting first (FL does): hand its buffers back instead of refusing,
+            // or its next open would fail with MMSYSERR_ALLOCATED and the port would be dead for it
+            let t = GetTickCount().wrapping_sub(inp.start_tick) as DWORD_PTR;
+            return_buffers(inp.client, std::mem::take(&mut inp.buffers), t);
+            if let Some((ring, _, _)) = shared() {
+                (*ring).stats[ST_OPEN].store(0, Ordering::Relaxed);
+                (*ring).stats[ST_STARTED].store(0, Ordering::Relaxed);
+                (*ring).stats[ST_CLOSES].fetch_add(1, Ordering::Relaxed);
+            }
             SetEvent(inp.stop);
             if let Some(t) = inp.thread.take() { let _ = t.join(); }
             CloseHandle(inp.stop);
@@ -327,12 +386,14 @@ pub unsafe extern "system" fn midMessage(dev: u32, msg: u32, user: DWORD_PTR, p1
             let Ok(mut g) = INPUT.lock() else { return MMSYSERR_ERROR };
             let Some(inp) = g.as_mut() else { return MMSYSERR_INVALHANDLE };
             if !inp.started { inp.started = true; inp.start_tick = GetTickCount(); }
+            if let Some((ring, _, _)) = shared() { (*ring).stats[ST_STARTED].store(1, Ordering::Relaxed); }
             MMSYSERR_NOERROR
         }
         MIDM_STOP => {
             let Ok(mut g) = INPUT.lock() else { return MMSYSERR_ERROR };
             let Some(inp) = g.as_mut() else { return MMSYSERR_INVALHANDLE };
             inp.started = false;
+            if let Some((ring, _, _)) = shared() { (*ring).stats[ST_STARTED].store(0, Ordering::Relaxed); }
             MMSYSERR_NOERROR
         }
         _ => MMSYSERR_NOTSUPPORTED,
