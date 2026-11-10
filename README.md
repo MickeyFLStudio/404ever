@@ -26,6 +26,10 @@ Download `404ever-Setup-x.y.z.exe` from [Releases](../../releases) and run it (i
 once: the MIDI port it adds is a system-wide driver entry). Close FL Studio first. The only other thing it
 needs is Microsoft Edge WebView2, which is part of Windows; the setup tells you if it is missing. Inside FL the port and controller script are called "TS404 Panel".
 
+Windows sometimes drops third-party MIDI driver entries when it reinstalls audio devices (after a crash or a
+driver update). 404ever checks for that at startup, at logon and every 15 minutes and puts its port back by itself;
+if the TS404 window is ever empty, restart FL Studio once.
+
 Then, once, in FL Studio:
 
 1. Restart FL Studio if it was running.

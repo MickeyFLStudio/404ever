@@ -1,5 +1,5 @@
 ; TS404 Panel installer (Inno Setup 6). Built by ..\build.bat after PyInstaller.
-#define AppVersion "1.1.0"
+#define AppVersion "1.1.1"
 
 [Setup]
 AppId={{6E3B9D2A-4C71-4F0E-9A5B-2D8F1C7E4A60}
@@ -40,6 +40,8 @@ Source: "..\dist\TS404Panel\*"; DestDir: "{app}"; Flags: ignoreversion recursesu
 ; the MIDI port driver goes to System32 like every MME driver (winmm cannot load a driver from a path with
 ; spaces); every 64-bit program that uses MIDI loads it, so it may be in use (replaced at restart then)
 Source: "..\ts404_midi.dll"; DestDir: "{sys}"; Flags: ignoreversion restartreplace uninsrestartdelete
+; puts the driver's registry entry back whenever Windows drops it (scheduled task, see the script)
+Source: "driver_guard.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; the controller script FL Studio runs (Options > MIDI settings > controller type "TS404 Panel")
@@ -55,6 +57,7 @@ Name: "{autodesktop}\TS404 Panel"; Filename: "{app}\TS404Panel.exe"; Parameters:
 Filename: "{app}\TS404Panel.exe"; Description: "Start the panel service now (it quits by itself when no TS404 is in use)"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\driver_guard.ps1"" -Uninstall"; Flags: runhidden; RunOnceId: "driverguard"
 Filename: "taskkill.exe"; Parameters: "/IM TS404Panel.exe /F"; Flags: runhidden; RunOnceId: "killservice"
 
 [UninstallDelete]
@@ -185,12 +188,12 @@ var
 begin
   Result := False;
   Slot := '';
-  for I := 1 to 9 do begin
+  for I := 9 downto 1 do begin   // highest first: Windows fills its own entries from the low end
     Name := 'midi' + IntToStr(I);
     if RegQueryStringValue(HKLM64, Drivers32, Name, V) then begin
       if CompareText(ExtractFileName(V), 'ts404_midi.dll') = 0 then begin Slot := Name; Result := True; exit; end;
     end else if Slot = '' then
-      Slot := Name;   // first free one
+      Slot := Name;   // highest free one
   end;
 end;
 
@@ -214,9 +217,15 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  GuardCode: Integer;
 begin
   if CurStep = ssPostInstall then begin
     RegisterDriver;
+    // Windows can drop the entry when it reinstalls audio devices: a scheduled task puts it back
+    Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+         '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\driver_guard.ps1') + '" -Install',
+         '', SW_HIDE, ewWaitUntilTerminated, GuardCode);
     // tells the MIDI driver (inside FL) how to start the service when a project with a TS404 is open:
     // program, arguments, FL script heartbeat, service alive file
     ForceDirectories(ExpandConstant('{localappdata}\TS404 Panel'));
