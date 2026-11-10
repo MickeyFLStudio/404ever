@@ -1,5 +1,5 @@
 ; TS404 Panel installer (Inno Setup 6). Built by ..\build.bat after PyInstaller.
-#define AppVersion "1.1.1"
+#define AppVersion "1.1.2"
 
 [Setup]
 AppId={{6E3B9D2A-4C71-4F0E-9A5B-2D8F1C7E4A60}

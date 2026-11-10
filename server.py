@@ -644,8 +644,12 @@ class Companion:
 # FL's scripting API can make a param "last tweaked" (bridge command 05) but has no call
 # to create an automation clip or link a controller, so we click FL's own menu items:
 # TOOLS on the menu bar -> "Last tweaked" (second-to-last row) -> the item in its submenu.
-# Offsets are FL's layout at 96 dpi * 1.25 (scaled by FL's DPI). Real mouse input only,
-# the same as you clicking; the mouse goes back where it was.
+# Offsets are FL's layout at 96 dpi * 1.25, scaled by the size FL really draws at: FL has its own
+# interface scaling, which need not follow the monitor's DPI, so the scale and the place of TOOLS are
+# taken from the menu bar's own window. Real mouse input only, the same as you clicking; the mouse
+# goes back where it was.
+MENU_W = 366        # width of the menu bar (FILE ... HELP) at that reference size
+TOOLS_AT = 0.822    # centre of TOOLS, as a fraction of the menu bar's width
 LT_ITEMS = {"clip": 167, "link": 230}   # submenu row centres below the submenu's top edge
 lt_lock = threading.Lock()
 
@@ -694,21 +698,33 @@ def last_tweaked(action):
         user32.GetWindowThreadProcessId(fl, ctypes.byref(pid))
         pid = pid.value
         sc = user32.GetDpiForWindow(fl) / 120
+        o = wintypes.POINT(0, 0)
+        user32.ClientToScreen(fl, ctypes.byref(o))
+        tools = (o.x + int(305 * sc), o.y + int(25 * sc))
+        bar = [h for h in children(fl, True) if wclass(h) == "TNewMenu" and user32.IsWindowVisible(h)]
+        if bar:
+            r = wrect(bar[0])
+            if r.right - r.left > 50:
+                sc = (r.right - r.left) / MENU_W
+                tools = (r.left + int((r.right - r.left) * TOOLS_AT), (r.top + r.bottom) // 2)
         back = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(back))
         try:
             time.sleep(0.25)   # let FL handle the touch command first
-            o = wintypes.POINT(0, 0)
-            user32.ClientToScreen(fl, ctypes.byref(o))
-            click(o.x + int(305 * sc), o.y + int(25 * sc))   # TOOLS
+            click(*tools)   # TOOLS
             menu = wait_popups(pid, lambda q: q[3] - q[1] > 300 * sc)
             if not menu:
+                at = wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(at))
+                log("last tweaked: the TOOLS menu did not open (clicked %d,%d, mouse at %d,%d, scale %.2f, popups %r)"
+                    % (tools[0], tools[1], at.x, at.y, sc, fl_popups(pid)))
                 return False
             l, t, r, b = menu
             row_y = b - int(36 * sc)   # "Last tweaked"
             user32.SetCursorPos(l + int(57 * sc), row_y)
             sub = wait_popups(pid, lambda q: q != menu and abs(q[1] - row_y) < 40 * sc)
             if not sub:
+                log("last tweaked: no submenu (menu %r, row %d, scale %.2f, popups %r)" % (menu, row_y, sc, fl_popups(pid)))
                 # close only our menu: Escape with no menu open closes FL's focused window
                 for _ in range(3):
                     if not fl_popups(pid):

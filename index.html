@@ -303,21 +303,31 @@ async function poll() {
 }
 
 // ---- right-click menu (FL's own knob menu can't be opened from outside FL)
-let clip = null;
+let clip = null, menuKeys = {};
 function showMenu(e, off) {
   e.preventDefault();
   const m = $('#menu'), raw = !document.querySelector(`[data-knob="${off}"]`);
+  // laid out like FL's own knob menu; the letter after & is the item's key while the menu is open
   const items = [
     ['cap', NAMES[off]],
-    ['Edit events', () => post('/editor', { ch: chan, off, mode: 0 })],
-    ['Edit events in piano roll', () => post('/editor', { ch: chan, off, mode: 1 })],
-    ['Create automation clip', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'clip' }))],
-    ['Link to controller...', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'link' }))],
-    ['Reset to default', off in DEFAULTS ? () => reset(off) : null],
-    ['Copy value', () => { const p = param(off); clip = p && { raw, v: raw ? p[0] : p[1] }; }],
-    ['Paste value', clip && clip.raw === raw ? () => { if (raw) localRaw(off, clip.v); else local(off, clip.v); send(off, clip.v, raw); } : null],
+    ['&Reset', off in DEFAULTS ? () => reset(off) : null],
+    ['cap', 'Automation'],
+    ['&Edit events', () => post('/editor', { ch: chan, off, mode: 0 })],
+    ['Edit events in &piano roll', () => post('/editor', { ch: chan, off, mode: 1 })],
+    ['Create &automation clip', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'clip' }))],
+    ['cap', 'Remote control'],
+    ['&Link to controller...', () => post('/touch', { ch: chan, off }).then(() => post('/lasttweaked', { action: 'link' }))],
+    ['cap', 'Value'],
+    ['&Copy value', () => { const p = param(off); clip = p && { raw, v: raw ? p[0] : p[1] }; }],
+    ['Paste &value', clip && clip.raw === raw ? () => { if (raw) localRaw(off, clip.v); else local(off, clip.v); send(off, clip.v, raw); } : null],
   ];
-  m.innerHTML = items.map(([t, f], i) => t === 'cap' ? `<div class="cap">${f}</div>` : `<div class="it${f ? '' : ' dis'}" data-i="${i}">${t}</div>`).join('');
+  menuKeys = {};
+  m.innerHTML = items.map(([t, f], i) => {
+    if (t === 'cap') return `<div class="cap">${f}</div>`;
+    const k = t.indexOf('&');
+    if (f) menuKeys[t[k + 1].toLowerCase()] = f;
+    return `<div class="it${f ? '' : ' dis'}" data-i="${i}">${t.slice(0, k)}<u>${t[k + 1]}</u>${t.slice(k + 2)}</div>`;
+  }).join('');
   m.onclick = ev => { const it = ev.target.closest('.it'); if (it) { items[+it.dataset.i][1](); hideMenu(); } };
   m.classList.add('show');
   const r = m.getBoundingClientRect();
@@ -334,6 +344,13 @@ document.addEventListener('contextmenu', e => {
 
 // ---- Space plays / stops FL even though this window has the focus
 document.addEventListener('keydown', e => {
+  if ($('#menu').classList.contains('show')) {   // menu open: its letter keys, nothing else
+    const f = !e.ctrlKey && !e.altKey && !e.metaKey && menuKeys[e.key.toLowerCase()];
+    e.preventDefault();
+    hideMenu();
+    if (f) f();
+    return;
+  }
   if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'SELECT') { e.preventDefault(); post('/transport'); }
   if (e.key === 'Escape') hideMenu();
 });
